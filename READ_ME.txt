@@ -22,4 +22,14 @@ This means:
 The script detected the word "name" (which could be a PII indicator).
 No random seed setting was found (consider adding one for reproducibility).
 The script found at least one if statement (basic input validation or logic).
+
+
+Version 2 :
+The script now includes advanced checks for:
+
+Deprecated/unsafe libraries (e.g., pickle, marshal)
+Use of unsafe functions (eval, exec)
+Insecure model serialization usage
+Functions/classes missing docstrings (code quality)
+
 No explainability or fairness libraries were detected.
