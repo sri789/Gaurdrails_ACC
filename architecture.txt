@@ -1,0 +1,152 @@
+# System architecture overview
+
+This agent is built as a layered, fail-fast pipeline. Each layer performs a focused check, feeds structured outcomes forward, and short-circuits on violations. The architecture emphasizes determinism, transparency, and auditability, with an optional intelligent safety filter to catch nuanced risks.
+
+---
+
+## Data flow and orchestration
+
+#### Request lifecycle
+- **Normalization:** User input is standardized (Unicode normalization, trimming).
+- **Guardrail sequence:** Input restriction → Malicious code → LLM safety filter → Invocation → Plagiarism.
+- **Outcome aggregation:** Each layer appends its result to a shared “checks” map.
+- **Finalization:** The pipeline returns a consistent object with trace ID, per-check outcomes, and final status.
+
+#### Output object
+- **Trace:** Short UUID for run correlation.
+- **Checks:** Map of category → {status, reason/content}.
+- **Final:** “ok”, “blocked”, or “plagiarism_flagged”.
+
+---
+
+## Layer 1: Input restriction
+
+This layer screens for unsafe categories and malformed inputs before any deeper processing.
+
+- **Purpose:** Block trivially unsafe or malformed requests early.
+- **Scope:** Length limit, empty input, sensitive content detection via category regex.
+- **Categories:**
+  - **Self harm:** suicide, self-harm intent.
+  - **Violence:** killing, attacks, weapons making.
+  - **Illegal:** hacking, cracking, card data theft, password breaking.
+  - **Personal data:** Aadhaar, PAN, SSN, UPI, passwords.
+- **Behavior:**
+  - **Passed:** Adds “passed” with reason “OK”.
+  - **Blocked:** Adds “blocked” with category reason; terminates pipeline.
+- **Design choices:**
+  - **Deterministic regex:** Fast, auditable and explainable.
+  - **Fail-fast:** Protects downstream layers from unnecessary work.
+
+---
+
+## Layer 2: Malicious code check
+
+Detects dangerous execution patterns whether or not the user used code fences.
+
+- **Purpose:** Prevent echoing or processing input containing risky execution primitives or commands.
+- **Heuristics:** Raw string scan for high-risk patterns (e.g., os.system, subprocess.Popen/run/call, eval, exec, rm -rf).
+- **AST analysis:** If fenced code exists, parse and walk calls to detect forbidden names with high precision.
+- **Behavior:**
+  - **Dangerous patterns found:** “blocked” with the matched patterns.
+  - **Syntax errors (fenced):** “blocked” to avoid executing malformed code.
+  - **Passed:** “OK” if nothing suspicious is detected.
+- **Coverage:**
+  - **Unfenced code:** Protected by raw string heuristics.
+  - **Fenced code:** Protected by AST-based call inspection.
+
+---
+
+## Layer 3: LLM safety filter
+
+An intelligent classifier complements deterministic checks to catch nuanced risks.
+
+- **Purpose:** Identify contextually unsafe requests (e.g., obfuscated intent) that regex might miss.
+- **Prompting:** Single-label classification (“SAFE”/“UNSAFE”) with minimal instruction overhead.
+- **Decisioning:**
+  - **Blocked by classifier:** Adds “blocked” and terminates.
+  - **Passed:** Adds “passed” and continues.
+- **Trade-offs addressed:**
+  - **Flexibility vs determinism:** Works in tandem with hardcoded checks; neither replaces the other.
+  - **Latency control:** Runs once after deterministic checks to minimize unnecessary model calls.
+- **Demo note:** In the offline demo, a lightweight rule approximates the filter behavior; in production, the filter calls your chosen model.
+
+---
+
+## Layer 4: Safe LLM invocation
+
+Encapsulates interaction with the model and enforces output limits.
+
+- **Purpose:** Provide a controlled, minimal interface for generating content.
+- **Model gating:** Whitelisted models only; reject unknown ones to avoid undefined behavior.
+- **Response validation:** Ensure non-empty content structure before proceeding.
+- **Output truncation:** Cap character count to reduce flooding, memory, and plagiarism false positives.
+- **Behavior:**
+  - **Config error:** Returns a “config_error” variant (in the full pipeline design, this can be converted to a structured check if desired).
+  - **Valid response:** Pass content forward for plagiarism screening.
+
+---
+
+## Layer 5: Plagiarism detection
+
+Flags content similar to a reference corpus using token-level cosine similarity.
+
+- **Purpose:** Prevent generated output from mirroring known text excessively.
+- **Normalization:** Lowercasing, punctuation stripping, whitespace compaction.
+- **Vectorization:** Token counts (bag-of-words) for both generated output and references.
+- **Similarity metric:** Cosine similarity with a threshold (default 0.85) to balance sensitivity and noise.
+- **Behavior:**
+  - **Flagged:** Adds “flagged” with the best match index and similarity; sets final to “plagiarism_flagged”.
+  - **Passed:** Adds “passed” and allows returning the answer.
+- **Design choices:**
+  - **Lightweight and transparent:** Judges can reason about false positives/negatives.
+  - **Corpus-agnostic:** Provide any corpus relevant to your demo.
+
+---
+
+## Observability, reliability, and extensibility
+
+#### Observability
+- **Trace IDs:** Short UUIDs for every run to tie logs and UI events.
+- **Structured checks:** Every layer emits a status and reason; the final outcome is derived from these.
+
+#### Reliability
+- **Fail-fast design:** Early exits on blocked categories minimize risk.
+- **Consistent returns:** The pipeline always includes the “checks” map to avoid KeyErrors in demos.
+- **Deterministic foundations:** Regex and AST checks provide repeatable behavior.
+
+#### Extensibility
+- **Plug-in layers:** Add or swap layers (e.g., PII redaction, policy compliance, rate limiting) without altering core flow.
+- **Model abstraction:** Replace the dummy model with your production SDK while preserving guardrails.
+- **Configurable thresholds:** Adjust length limits and plagiarism similarity to your context.
+
+---
+
+## Demo mode and GUI readiness
+
+#### Command-line demo
+- **Built-in tests:** The file includes a main block running curated queries for each guardrail.
+- **Markdown-style tables:** Results print per query with categorized outcomes for judge readability.
+
+#### GUI layer (optional)
+- **Separation of concerns:** The GUI is kept out of the core logic; references can show you have it.
+- **Interface plan:** Textbox input → pipeline call → JSON/pretty view with all category outcomes.
+- **Judge experience:** Immediate visibility of what passed/blocked and why, plus the trace ID.
+
+---
+
+## Failure modes and handling
+
+- **Input blocked:** Pipeline exits after Input Restriction; checks map includes the reason.
+- **Malicious code blocked:** Exits after code check with matched patterns or syntax error.
+- **LLM safety blocked:** Exits after classifier with classification reason.
+- **Config errors:** When using real models, throw an explicit configuration error early; in the final MCP, you can surface this as a “Model/Config” check for consistency.
+- **Plagiarism flagged:** Returns a non-OK final with similarity metadata; answer content truncated preview is available for inspection.
+
+---
+
+## Why this architecture works for a hackathon MCP
+
+- **Minimal yet complete:** Clear guardrails, intelligent classifier, plagiarism, audit trail.
+- **Explainable:** Judges see each layer’s rationale instead of a single opaque decision.
+- **Demo-friendly:** CLI tables out-of-the-box, GUI-ready without entangling core logic.
+- **Production-aligned:** Uses patterns common in real safety systems: whitelist models, fail-fast checks, structured outcomes, and hybrid safety filtering.
