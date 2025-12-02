@@ -1,0 +1,45 @@
+=== Failsafe Agent Demo ===
+
+--- Safe Query ---
+Trace ID: 8aeaf7ef
+| Check Category       | Status   | Reason/Content |
+|----------------------|----------|----------------|
+| Input Restriction    | passed   | OK |
+| Malicious Code       | passed   | OK |
+| LLM Safety Filter    | passed   | OK |
+| Plagiarism           | passed   | OK |
+| Answer               | ok       | Echo from gpt-4o-mini: Explain quantum computing basics |
+Final Outcome: ok
+
+--- Sensitive Query ---
+Trace ID: 217841f9
+| Check Category       | Status   | Reason/Content |
+|----------------------|----------|----------------|
+| Input Restriction    | blocked  | Sensitive content: self_harm |
+Final Outcome: blocked
+
+--- Malicious Code ---
+Trace ID: 01b37c7f
+| Check Category       | Status   | Reason/Content |
+|----------------------|----------|----------------|
+| Input Restriction    | passed   | OK |
+| Malicious Code       | blocked  | Dangerous patterns: ['\\bos\\.system\\s*\\(', '\\brm\\s+-rf\ |
+Final Outcome: blocked
+
+--- Plagiarism ---
+Trace ID: 8b83db78
+| Check Category       | Status   | Reason/Content |
+|----------------------|----------|----------------|
+| Input Restriction    | passed   | OK |
+| Malicious Code       | passed   | OK |
+| LLM Safety Filter    | passed   | OK |
+| Plagiarism           | passed   | OK |
+| Answer               | ok       | Echo from gpt-4o-mini: Echo from gpt-4o-mini: This is an exa |
+Final Outcome: ok
+
+--- Oversized Input ---
+Trace ID: 5b6214f8
+| Check Category       | Status   | Reason/Content |
+|----------------------|----------|----------------|
+| Input Restriction    | blocked  | Query too long (6000 chars). Limit: 5000 |
+Final Outcome: blocked
